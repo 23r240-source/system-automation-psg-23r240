@@ -1,0 +1,155 @@
+
+import pandas as pd
+import joblib
+import time
+
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.preprocessing import LabelEncoder
+
+DATA_FILE = "sensor_log.csv"
+MODEL_FILE = "machine_state_model.pkl"
+ENCODER_FILE = "state_encoder.pkl"
+LOG_FILE = "day2_factory_log.txt"
+
+FEATURES = ["temperature", "pressure", "vibration", "current", "rpm"]
+TARGET = "state"
+
+df = pd.read_csv(DATA_FILE)
+df.columns = df.columns.str.strip().str.lower()
+
+df = df[FEATURES + [TARGET]].copy()
+
+for col in FEATURES:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+df[TARGET] = df[TARGET].astype("string").str.strip().str.upper()
+df = df.dropna(subset=FEATURES + [TARGET])
+
+if df.empty or df[TARGET].nunique() < 2:
+    raise ValueError("The dataset must contain valid records and at least two states.")
+
+X = df[FEATURES]
+encoder = LabelEncoder()
+y = encoder.fit_transform(df[TARGET])
+
+if pd.Series(y).value_counts().min() < 2:
+    raise ValueError("Each state needs at least two records.")
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+model = DecisionTreeClassifier(
+    max_depth=8,
+    min_samples_leaf=5,
+    class_weight="balanced",
+    random_state=42
+)
+
+model.fit(X_train, y_train)
+
+predictions = model.predict(X_test)
+
+print("\n========== MODEL EVALUATION ==========")
+print("Total records:", len(df))
+print("Training records:", len(X_train))
+print("Testing records:", len(X_test))
+print(f"Accuracy: {accuracy_score(y_test, predictions) * 100:.2f}%")
+
+print("\nClassification Report:")
+print(classification_report(
+    y_test,
+    predictions,
+    labels=list(range(len(encoder.classes_))),
+    target_names=encoder.classes_,
+    zero_division=0
+))
+
+joblib.dump(model, MODEL_FILE)
+joblib.dump(encoder, ENCODER_FILE)
+
+print("Decision Tree model saved:", MODEL_FILE)
+
+def rule_based_result(reading):
+    if reading["temperature"] > 90:
+        return "OVERHEATING"
+    elif reading["temperature"] > 80:
+        return "OVERHEATING"
+    elif reading["pressure"] < 3:
+        return "LOW_PRESSURE"
+    elif reading["vibration"] > 7:
+        return "HIGH_VIBRATION"
+    elif reading["current"] > 16:
+        return "MOTOR_OVERLOAD"
+    else:
+        return "NORMAL"
+
+def main():
+    print("\n========== MACHINE MONITORING SYSTEM ==========")
+    print("Enter q at Temperature to exit.")
+
+    while True:
+        try:
+            temperature = input("\nTemperature: ").strip()
+
+            if temperature.lower() == "q":
+                break
+
+            pressure = float(input("Pressure: "))
+            vibration = float(input("Vibration: "))
+            current = float(input("Current: "))
+            rpm = float(input("RPM: "))
+
+            reading = {
+                "temperature": float(temperature),
+                "pressure": pressure,
+                "vibration": vibration,
+                "current": current,
+                "rpm": rpm
+            }
+
+            input_df = pd.DataFrame([reading], columns=FEATURES)
+
+            rule_result = rule_based_result(reading)
+            ai_prediction = model.predict(input_df)
+            ai_result = encoder.inverse_transform(ai_prediction)[0]
+
+            print("\n========== SENSOR READINGS ==========")
+            for name, value in reading.items():
+                print(f"{name.capitalize():<12}: {value}")
+
+            print("\nRule-Based Result:", rule_result)
+            print("AI Decision Tree Result:", ai_result)
+
+            if rule_result == ai_result:
+                print("Comparison: AGREE")
+
+                if rule_result == "NORMAL":
+                    print("Final Decision: MACHINE NORMAL")
+                else:
+                    print("Final Decision: INSPECT THE MACHINE")
+            else:
+                print("Comparison: DISAGREE")
+                print("Final Decision: INSPECT THE MACHINE")
+
+            with open(LOG_FILE, "a", encoding="utf-8") as file:
+                file.write(
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S')} | "
+                    f"Reading={reading} | Rule={rule_result} | "
+                    f"AI={ai_result} | "
+                    f"Agreement={rule_result == ai_result}\n"
+                )
+
+            print("Log saved:", LOG_FILE)
+
+        except ValueError:
+            print("Invalid input. Enter numeric values for all sensors.")
+        except KeyboardInterrupt:
+            break
+
+    print("\nMonitoring stopped.")
+
+if __name__ == "__main__":
+    main()

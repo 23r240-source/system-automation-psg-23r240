@@ -1,0 +1,103 @@
+
+import pandas as pd
+import joblib
+import time
+from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score
+
+FEATURES = ["temperature", "pressure", "vibration", "current", "rpm"]
+LOG_FILE = "day2_factory_log.txt"
+
+df = pd.read_csv("sensor_log.csv")
+df.columns = df.columns.str.strip().str.lower()
+df = df[FEATURES + ["state"]].dropna()
+df["state"] = df["state"].astype(str).str.strip().str.upper()
+
+X = df[FEATURES]
+encoder = LabelEncoder()
+y = encoder.fit_transform(df["state"])
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+model = DecisionTreeClassifier(
+    max_depth=8, min_samples_leaf=5,
+    class_weight="balanced", random_state=42
+)
+model.fit(X_train, y_train)
+
+print(f"AI Model Accuracy: {accuracy_score(y_test, model.predict(X_test))*100:.2f}%")
+joblib.dump(model, "machine_state_model.pkl")
+joblib.dump(encoder, "state_encoder.pkl")
+
+def rule_based_result(r):
+    if r["temperature"] > 80:
+        return "OVERHEATING"
+    elif r["pressure"] < 3:
+        return "LOW_PRESSURE"
+    elif r["vibration"] > 7:
+        return "HIGH_VIBRATION"
+    elif r["current"] > 16:
+        return "MOTOR_OVERLOAD"
+    return "NORMAL"
+
+def main():
+    print("\nMACHINE MONITORING SYSTEM")
+    print("Enter q at Temperature to exit.")
+
+    while True:
+        try:
+            t = input("\nTemperature: ").strip()
+            if t.lower() == "q":
+                break
+
+            r = {
+                "temperature": float(t),
+                "pressure": float(input("Pressure: ")),
+                "vibration": float(input("Vibration: ")),
+                "current": float(input("Current: ")),
+                "rpm": float(input("RPM: "))
+            }
+
+            ai = encoder.inverse_transform(
+                model.predict(pd.DataFrame([r], columns=FEATURES))
+            )[0]
+            rule = rule_based_result(r)
+
+            print("\n========== MACHINE REPORT ==========")
+            for key, value in r.items():
+                print(f"{key.capitalize():<15}: {value}")
+
+            print("Rule-Based Result:", rule)
+            print("AI Model Result  :", ai)
+
+            if rule == ai:
+                print("Comparison       : AGREE")
+                if rule == "NORMAL":
+                    print("Final Decision   : NO INSPECTION INDICATED")
+                else:
+                    print("Final Decision   : INSPECT THE MACHINE")
+            else:
+                print("Comparison       : DISAGREE")
+                print("Final Decision   : INSPECT THE MACHINE")
+
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(
+                    f"{time.strftime('%Y-%m-%d %H:%M:%S')} | "
+                    f"Reading={r} | Rule={rule} | AI={ai} | "
+                    f"Agreement={rule == ai}\n"
+                )
+
+        except ValueError:
+            print("Invalid input. Enter numeric values.")
+        except KeyboardInterrupt:
+            break
+
+    print("\nMonitoring stopped.")
+    print("Log saved to:", LOG_FILE)
+
+if __name__ == "__main__":
+    main()
